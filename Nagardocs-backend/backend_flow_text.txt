@@ -1,0 +1,273 @@
+NagarDocs AI
+Backend Flow — From File Upload to Result Screen
+This document explains every step of the document upload pipeline — which file handles each step, what happens in the
+database, and how Flutter communicates with FastAPI. The flow is identical in structure to the Marksheet Analytics app
+but adapted for any government document type.
+Quick Overview — All 10 Steps
+Step
+What Happens
+Key File
+1
+Flutter teacher taps Upload
+upload_screen.dart
+2
+FastAPI receives file, creates job
+upload.py
+3
+Tamper hash computed (SHA-256)
+tamper_service.py
+4
+File saved to Supabase Storage
+storage_service.py
+5
+Tesseract OCR extracts raw text
+ocr_service.py
+6
+GPT-4o classifies + extracts fields
+ocr_service.py
+7
+Auto-sort assigns folder
+autosort_service.py
+8
+Document + fields saved to DB
+upload.py
+9
+Activity logged, job marked done
+activity_service.py
+10
+Flutter polls, shows Result screen
+upload_provider.dart
+
+Step-by-Step — Files, Roles, Database
+1
+Flutter — Teacher taps Upload
+Camera or gallery → picks image or PDF
+upload_screen.dart
+Shows Camera button + Gallery button. Teacher picks the file. Calls upload_provider to start upload.
+upload_provider.dart
+StateNotifier — manages state: idle → uploading → processing → done. Holds job_id. Polls /upload/status/{job_id} every
+2 seconds.
+dio_client.dart + auth_interceptor.dart
+Sends multipart POST to /upload with file bytes. auth_interceptor automatically adds JWT token to header.
+DATABASE
+No DB writes at this step — Flutter side only
+2
+FastAPI — Receives file, creates upload job
+Returns job_id instantly, starts background task
+upload.py → POST /upload
+Reads file bytes. Generates UUID job_id. Inserts upload_jobs row with status=queued. Returns job_id to Flutter
+immediately (HTTP 202). Starts background task _process_document().
+security.py → get_current_user()
+Called as Depends() — validates JWT from Flutter header. Returns user dict with id + department_id. Returns 401 if token
+invalid.
+upload_schema.py → UploadJobResponse
+Pydantic model validating response: id, status, filename.
+database.py → SupabaseClient
+Custom httpx-based Supabase client. No C++ required. Handles all DB reads/writes via REST API.
+DATABASE
+INSERT INTO upload_jobs (id, user_id, department_id, status='queued', filename)
+3
+Background task — Compute tamper hash
+SHA-256 of raw bytes before any processing
+tamper_service.py → compute_hash()
+Takes raw file bytes. Runs hashlib.sha256(). Returns hex digest. This is the fingerprint of the original file stored in DB. If
+file is later modified and re-hashed, hashes won't match = tamper detected.
+tamper_service.py → check_duplicate()
+Queries documents table for same hash. If found → returns duplicate_of doc id. Upload continues but Flutter shows a
+warning badge.
+DATABASE
+SELECT id, filename FROM documents WHERE file_hash = '{hash}'
+No write yet — hash stored later with document row
+
+4
+Upload file to Supabase Storage
+Original file saved at documents/{dept_id}/{job_id}/filename
+storage_service.py → upload_file()
+Generates unique path: documents/{dept_id}/{job_id}/{filename}. Calls supabase.storage.from_('nagardocs').upload().
+Returns storage_path string saved in documents table.
+database.py → _StorageBucket.upload()
+httpx POST to Supabase Storage REST API. Sends raw bytes with correct content-type (image/jpeg or application/pdf).
+DATABASE
+Supabase Storage bucket: nagardocs
+Path: documents/{department_id}/{job_id}/{filename}
+RLS: only authenticated users can upload
+5
+OCR — Extract raw text from image/PDF
+Tesseract reads Marathi + Hindi + English
+ocr_service.py → _pdf_to_image_bytes()
+If file is PDF: uses PyMuPDF (fitz) to convert first page to PNG at 200 DPI. Returns image bytes ready for OCR.
+ocr_service.py → _extract_raw_text()
+Opens image with Pillow. Runs pytesseract.image_to_string() with lang='mar+hin+eng'. Returns raw text string — messy
+but complete.
+DATABASE
+No DB write — raw text passed to GPT in next step
+Example output: 'IIIIII IIIII... Name: Rahul Sharma...'
+6
+GPT-4o — Classify + extract structured fields
+Sends image + OCR text → returns structured JSON
+ocr_service.py → process_document()
+Sends BOTH the image (as base64) AND the raw OCR text to gpt-4o-mini. GPT reads the image visually and
+cross-references with OCR text. Returns: doc_type, language, confidence, tamper_flags, and fields array with
+label/value/confidence per field.
+DATABASE
+No DB write — result passed to autosort + document insert
+Example: {doc_type: 'Aadhaar Card', confidence: 0.94,
+fields: [{label:'Name', value:'Rahul Sharma', confidence:0.97}]}
+7
+Auto-sort — Assign document to cabinet folder
+doc_type keyword → folder lookup → create if needed
+
+autosort_service.py → classify()
+Takes doc_type from GPT. Matches against DOC_TYPE_TO_FOLDER dict (e.g. 'aadhaar card' → 'Identity Documents').
+If match: confidence=0.90. If no match: doc goes to 'Needs Review' folder, confidence=0.50.
+autosort_service.py → _get_or_create_folder()
+Checks if folder already exists in DB for this department. If not: creates it automatically with is_system=True. Returns
+folder_id.
+DATABASE
+SELECT id FROM folders WHERE department_id=? AND name=?
+INSERT INTO folders (department_id, name, is_system=True) ← only if not exists
+8
+Save document + fields to database
+One documents row + one document_fields row per field
+upload.py → Step 6 in _process_document()
+Inserts one row into documents with all metadata: job_id, user_id, department_id, folder_id, filename, storage_path,
+doc_type, language, ocr_confidence, sort_confidence, file_hash, tamper_flags, is_tampered.
+upload.py → Step 7 in _process_document()
+Loops through extracted fields from GPT. Inserts one row per field into document_fields. Each: document_id, label, value,
+confidence. This is exactly like subject_marks in the Marksheet app.
+DATABASE
+INSERT INTO documents (id, folder_id, doc_type, file_hash, is_tampered, ...)
+INSERT INTO document_fields (document_id, label, value, confidence) × N fields
+9
+Log activity + mark job done
+Admin Monitor reads activity_log in real time
+activity_service.py → log_upload()
+Inserts one row into activity_log: user_id, department_id, action='upload', document_id, detail='Uploaded Aadhaar Card:
+rahul.jpg'. Admin Monitor's activity feed tab reads this table.
+upload.py → Step 9
+Updates upload_jobs status to 'done', sets document_id. Flutter polling sees 'done' → navigates to Result screen.
+DATABASE
+INSERT INTO activity_log (user_id, action='upload', document_id, detail)
+UPDATE upload_jobs SET status='done', document_id=? WHERE id=?
+1
+0
+Flutter polls → shows Result screen
+Extracted fields + confidence + tamper status displayed
+
+upload_provider.dart
+Every 2 seconds calls GET /upload/status/{job_id}. When status=='done' → navigates to Result screen. When
+status=='failed' → shows error + retry button.
+result_card.dart
+Shows: document type chip, all extracted fields, confidence badge, tamper alert if flagged. Save to Cabinet button → calls
+cabinet.py to link document to folder.
+confidence_badge.dart
+Green if >85%, Yellow if 60-85%, Red if <60%. Shows teacher how reliable the extraction was.
+DATABASE
+GET /cabinet/{folder_id}/documents → doc appears in its folder
+GET /analytics/department → dashboard stats updated
+
+All Files — Complete Reference
+CORE
+main.py
+App entry point. Starts FastAPI, wires all routers, adds CORS middleware.
+config.py
+All .env settings: Supabase URL, OpenAI key, Tesseract path, confidence thresholds.
+database.py
+Custom httpx-based Supabase REST client. No C++ build needed. Handles all DB + Storage
+calls.
+security.py
+JWT validation via Supabase. get_current_user() + get_current_admin() dependencies. Role
+check.
+roles.py
+Role enum: user / officer / admin. require_role() dependency factory for route protection.
+logger.py
+App-wide logging. Must be at app/utils/logger.py for correct import path.
+websocket.py
+ConnectionManager for live WebSocket presence — connects, disconnects, broadcasts to
+admin.
+API ROUTES
+auth.py
+POST /auth/register (dept code gate) + POST /auth/login (dept code + password check).
+upload.py
+POST /upload (receive file, create job, start background task). GET /upload/status/{id}.
+cabinet.py
+CRUD for folders. GET folder docs. Move doc. POST /cabinet/autosort.
+search.py
+GET /search?q=... Full-text search across all department documents with highlight markers.
+analytics.py
+GET /analytics/department + /analytics/global. Stats for dashboard screen.
+export.py
+GET /export/folder/{id}?format=zip|csv. GET /export/document/{id}. File streaming.
+admin.py
+GET /admin/presence + /activity + /security. POST ban/approve/promote user actions.
+share.py
+POST /share/link (public token). POST /share/email. GET /share/access/{token}.
+SERVICES
+ocr_service.py
+PDF→image (PyMuPDF), Tesseract OCR, GPT-4o field extraction. Returns structured JSON.
+tamper_service.py
+compute_hash() SHA-256 baseline. check_duplicate() hash lookup. verify_integrity().
+autosort_service.py
+Keyword-based doc_type → folder mapping. _get_or_create_folder() for auto-provisioning.
+storage_service.py
+upload_file(), get_signed_url(), delete_file(). Wraps Supabase Storage bucket 'nagardocs'.
+activity_service.py
+log() + convenience wrappers: log_upload, log_view, log_share, log_login, log_export.
+analytics_service.py
+compute_department() from pre-fetched rows. get_global_stats(). Daily upload trends.
+share_service.py
+create_public_link() UUID token. share_via_email() access_control or pending_invite.
+SCHEMAS
+upload_schema.py
+UploadJobResponse: id, status, filename, error_message, document_id.
+cabinet_schema.py
+FolderCreate/Update/Response. DocumentResponse with document_fields list.
+search_schema.py
+SearchResultResponse: id, filename, doc_type, match_highlights list.
+auth_schema.py
+RegisterRequest (with department_code), LoginRequest, AuthResponse.
+share_schema.py
+ShareLinkCreate, ShareLinkResponse, ShareEmailRequest.
+
+Database Tables — Quick Reference
+Table
+Purpose
+Key Columns
+departments
+Municipal departments (pre-seeded by admin)
+id, code, name, city, state
+users
+Staff accounts with role + status
+id, email, department_id, role, status, last_seen
+upload_jobs
+Tracks OCR processing per file
+id, user_id, department_id, status, document_id
+folders
+Cabinet folders per department
+id, department_id, name, doc_type_affinity, is_system
+documents
+One row per scanned document
+id, folder_id, doc_type, file_hash, is_tampered, ocr_confidence
+document_fields
+Extracted fields per document
+id, document_id, label, value, confidence
+activity_log
+Audit trail — all user actions
+id, user_id, action, document_id, detail, created_at
+shared_links
+Public share tokens
+id, token, document_id, expires_at, is_active
+access_control
+Per-user document access grants
+id, document_id, user_id, permission
+pending_invites
+Invites for non-registered emails
+id, document_id, invited_email, expires_at
+Columns to add manually in Supabase SQL Editor
+ALTER TABLE users ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'pending'
+CHECK (status IN ('pending', 'verified', 'banned'));
+ALTER TABLE activity_log ADD COLUMN IF NOT EXISTS metadata JSONB DEFAULT '{}';
+ALTER TABLE folders ADD COLUMN IF NOT EXISTS is_system BOOLEAN DEFAULT FALSE;
+-- Plus: create shared_links, access_control, pending_invites tables
+-- See the full SQL from the previous review session.
+NagarDocs AI — Backend Flow Reference — Hack-The-Gap 2.0 SG2

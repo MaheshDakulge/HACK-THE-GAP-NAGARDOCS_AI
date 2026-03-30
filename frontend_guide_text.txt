@@ -1,0 +1,689 @@
+NagarDocs AI
+Flutter Frontend Development Guide
+Transitions • 3D Effects • Animations • Screen-by-Screen Prompt
+This guide tells you exactly what to build for each Flutter screen — what widgets to use, what transitions and 3D effects
+to add, and exact copy-paste prompts you can give Cursor or ChatGPT to generate each screen. Every screen connects
+to the backend endpoints from the Backend Flow PDF.
+Screen
+Route
+Key Effect
+Backend Endpoint
+Login
+/login
+3D card flip on submit
+POST /auth/login
+Register
+/register
+Slide-up form reveal
+POST /auth/register
+Home Dashboard
+/home
+Staggered card entrance
+GET /analytics/global
+Upload
+/upload
+Floating scan button + ripple
+POST /upload
+Processing
+/processing
+Animated pipeline steps
+GET /upload/status/{id}
+Result
+/result
+Slide-in fields + confetti
+GET /cabinet/documents/{id}
+Cabinet
+/cabinet
+3D folder tilt on hover
+GET /cabinet/folders
+Folder Detail
+/cabinet/:id
+Hero transition from folder
+GET /cabinet/{id}/documents
+Search
+/search
+Expanding search bar
+GET /search?q=...
+Analytics
+/analytics
+Animated bar + number count-up
+GET /analytics/department
+Admin Monitor
+/admin
+Live pulsing presence dots
+GET /admin/presence
+
+1. Design System — Colors, Typography, Spacing
+Color Palette
+Token
+Hex
+Usage
+primary
+#1A3C5E
+App bar, primary buttons, headers
+primaryLight
+#2563A8
+Links, secondary headers, active tabs
+accent
+#0F766E
+Success states, confirmed badges
+success
+#166534
+Pass status, confirmed rows
+warning
+#92400E
+ATKT, low confidence, pending
+error
+#991B1B
+Fail, tamper alert, banned user
+surface
+#FFFFFF
+Card backgrounds
+background
+#F1F5F9
+Page background
+textPrimary
+#1E293B
+Main text
+textSecondary
+#64748B
+Labels, subtitles, hints
+divider
+#E2E8F0
+Borders, separators
+app_colors.dart — exact values
+class AppColors {
+static const primary = Color(0xFF1A3C5E);
+static const primaryLight = Color(0xFF2563A8);
+static const accent = Color(0xFF0F766E);
+static const success = Color(0xFF166534);
+static const warning = Color(0xFF92400E);
+static const error = Color(0xFF991B1B);
+static const surface = Color(0xFFFFFFFF);
+static const background = Color(0xFFF1F5F9);
+static const textPrimary = Color(0xFF1E293B);
+static const textSecondary= Color(0xFF64748B);
+static const divider = Color(0xFFE2E8F0);
+}
+Typography
+Style
+Font
+Size
+Weight
+Usage
+h1
+Inter
+28px
+Bold 700
+Page titles
+h2
+Inter
+22px
+Bold 700
+Section headers
+h3
+Inter
+18px
+Semi 600
+Card titles
+body
+Inter
+14px
+Regular
+Main content
+caption
+Inter
+12px
+Regular
+Labels, hints
+mono
+Courier
+12px
+Regular
+File names, code
+stat
+Inter
+32px
+Bold 700
+Dashboard numbers
+
+Global Transition Settings
+Animation
+Duration
+Curve
+Where Used
+Page transition
+300ms
+easeInOut
+All route changes
+Card entrance
+400ms
+easeOutBack
+Home dashboard cards
+Stagger delay
++80ms each
+easeOut
+List items loading
+Button press
+150ms
+easeIn
+All tap feedback
+Number count-up
+800ms
+easeOut
+Analytics stats
+Presence pulse
+1500ms
+easeInOut
+Admin online dots
+Hero transition
+350ms
+easeInOutCubic
+Folder → detail
+
+2. Screen-by-Screen Build Guide
+1
+Login Screen — /login
+Widgets: Stack, AnimatedContainer, Form, TextFormField, ElevatedButton
+File: features/auth/presentation/screens/login_screen.dart
+3D EFFECT
+// On submit button tap — 3D card flip animation
+Transform(
+transform: Matrix4.identity()
+..setEntry(3, 2, 0.001) // perspective
+..rotateY(_flipAnimation.value * math.pi),
+alignment: Alignment.center,
+child: _isFlipped ? _buildSuccessCard() : _buildLoginForm(),
+)
+TRANSITIONS
+// Slide up transition into app
+SlideTransition(
+position: Tween(begin: Offset(0, 1), end: Offset.zero)
+.animate(CurvedAnimation(parent: _ctrl, curve: Curves.easeOutCubic)),
+child: loginCard,
+)
+STATE: AUTH_PROVIDER.DART
+loading state shows CircularProgressIndicator inside button. error state shows shake animation on card.
+
+3
+Home Dashboard — /home
+Widgets: GridView, AnimatedOpacity, TweenAnimationBuilder, CustomScrollView
+File: features/home/presentation/screens/home_screen.dart
+STAGGERED CARD ENTRANCE
+// Each stat card fades + slides in with 80ms stagger
+AnimationController _ctrl = AnimationController(
+vsync: this, duration: Duration(milliseconds: 600));
+// For each card at index i:
+Interval(i * 0.08, i * 0.08 + 0.4, curve: Curves.easeOutBack)
+FadeTransition(opacity: _fadeAnim,
+child: SlideTransition(
+position: Tween(begin: Offset(0, 0.3), end: Offset.zero)
+.animate(_slideAnim), child: statCard))
+NUMBER COUNT-UP (STAT CARDS)
+TweenAnimationBuilder(
+tween: Tween(begin: 0, end: totalDocs.toDouble()),
+duration: Duration(milliseconds: 800),
+curve: Curves.easeOut,
+builder: (ctx, val, _) => Text('${val.toInt()}',
+style: AppTextStyles.stat),
+)
+ENDPOINT
+GET /analytics/global — returns total_documents, tamper_flagged_count, uploaded_today, active_users_today
+
+4
+Upload Screen — /upload
+Widgets: Stack, GestureDetector, AnimatedScale, InkWell, FilePicker, ImagePicker
+File: features/upload/presentation/screens/upload_screen.dart
+FLOATING SCAN BUTTON — 3D PRESS EFFECT
+// Scale down on press, scale up on release
+GestureDetector(
+onTapDown: (_) => setState(() => _pressed = true),
+onTapUp: (_) => setState(() => _pressed = false),
+child: AnimatedScale(
+scale: _pressed ? 0.92 : 1.0,
+duration: Duration(milliseconds: 120),
+curve: Curves.easeInOut,
+child: scanButton,
+),
+)
+RIPPLE ON UPLOAD ZONE
+Material(color: Colors.transparent,
+child: InkWell(
+borderRadius: BorderRadius.circular(16),
+splashColor: AppColors.primaryLight.withOpacity(0.2),
+onTap: _pickFile,
+child: uploadDropZone,
+),
+)
+ENDPOINT
+POST /upload — multipart: file bytes + language_hint + doc_type_hint. Returns job_id immediately.
+
+5
+Processing Screen — /processing
+Widgets: AnimatedContainer, LinearProgressIndicator, Lottie (optional), TweenAnimationBuilder
+File: features/upload/presentation/screens/processing_screen.dart
+ANIMATED PIPELINE STEPS
+// Each step has: pending / active (pulse) / done state
+// Poll GET /upload/status/{job_id} every 2 seconds
+// Active step pulses with scale animation:
+AnimatedScale(
+scale: step.isActive ? 1.05 : 1.0,
+duration: Duration(milliseconds: 600),
+curve: Curves.easeInOut,
+child: stepIcon,
+)
+// Progress bar fills left-to-right:
+AnimatedFractionallySizedBox(
+widthFactor: step.progress,
+duration: Duration(milliseconds: 400),
+child: Container(color: AppColors.primary),
+)
+5 PIPELINE STEPS TO SHOW
+1. OCR Text Extraction 2. AI Classification 3. Field Extraction 4. Duplicate Check 5. Tamper Detection
+NAVIGATE WHEN DONE
+// When status == 'done' → push to ResultScreen with doc_id
+if (job.status == 'done') context.push('/result/${job.documentId}');
+
+6
+Result Screen — /result/:docId
+Widgets: SlideTransition, AnimatedList, Hero, Confetti (confetti package)
+File: features/upload/presentation/screens/result_screen.dart
+SLIDE-IN FIELD ROWS (STAGGERED)
+// Each extracted field slides in from bottom with stagger
+for (int i = 0; i < fields.length; i++) {
+final anim = CurvedAnimation(
+parent: _ctrl,
+curve: Interval(i * 0.1, i * 0.1 + 0.5, curve: Curves.easeOutBack),
+);
+SlideTransition(
+position: Tween(begin: Offset(0, 0.5), end: Offset.zero).animate(anim),
+child: fieldRow,
+);
+}
+CONFETTI ON HIGH CONFIDENCE (>85%)
+// Use confetti package
+if (doc.ocrConfidence > 0.85 && !doc.isTampered) {
+_confettiCtrl.play();
+}
+ConfettiWidget(confettiController: _confettiCtrl,
+blastDirectionality: BlastDirectionality.explosive,
+colors: [AppColors.primary, AppColors.accent, Colors.amber])
+TAMPER ALERT BANNER (IF FLAGGED)
+if (doc.isTampered)
+AnimatedContainer(
+color: AppColors.error.withOpacity(0.1),
+child: Row([Icon(Icons.warning), Text('Tamper detected')]),
+)
+
+7
+Cabinet Screen — /cabinet
+Widgets: GridView, MouseRegion (for web), Transform, Hero
+File: features/cabinet/presentation/screens/cabinet_list_screen.dart
+3D FOLDER TILT ON HOVER/PRESS
+// Tilt toward touch point using Matrix4
+GestureDetector(
+onTapDown: (details) {
+final dx = (details.localPosition.dx / cardWidth - 0.5) * 0.2;
+final dy = (details.localPosition.dy / cardHeight - 0.5) * 0.2;
+setState(() => _tilt = Offset(dx, dy));
+},
+onTapUp: (_) => setState(() => _tilt = Offset.zero),
+child: AnimatedContainer(
+duration: Duration(milliseconds: 200),
+transform: Matrix4.identity()
+..setEntry(3, 2, 0.001)
+..rotateX(-_tilt.dy)
+..rotateY(_tilt.dx),
+child: folderCard,
+),
+)
+HERO TAG FOR FOLDER → DETAIL TRANSITION
+// On folder card:
+Hero(tag: 'folder_${folder.id}', child: folderIcon)
+// On folder detail screen:
+Hero(tag: 'folder_${folder.id}', child: folderIcon)
+AUTO-SORT BUTTON — SPARKLE ANIMATION
+// Rotate icon while auto-sorting
+AnimatedRotation(
+turns: _isSorting ? 10 : 0,
+duration: Duration(milliseconds: 1500),
+child: Icon(Icons.auto_fix_high),
+)
+
+9
+Search Screen — /search
+Widgets: AnimatedContainer, SearchDelegate or custom, RichText for highlights
+File: features/search/presentation/screens/search_screen.dart
+EXPANDING SEARCH BAR ANIMATION
+AnimatedContainer(
+duration: Duration(milliseconds: 300),
+curve: Curves.easeOutCubic,
+width: _focused ? MediaQuery.of(context).size.width - 32 : 200,
+decoration: BoxDecoration(
+borderRadius: BorderRadius.circular(_focused ? 12 : 24),
+color: AppColors.surface,
+border: Border.all(color: _focused ? AppColors.primary : AppColors.divider),
+),
+child: TextField(...),
+)
+HIGHLIGHT MATCHED TEXT IN RESULTS
+// Backend returns snippet: '^^Rahul^^ Sharma'
+// Split on ^^ and render matched part in amber
+RichText(text: TextSpan(children: [
+for (final part in snippet.split('^^'))
+TextSpan(
+text: part,
+style: isHighlight(part)
+? TextStyle(color: Colors.amber[800], fontWeight: FontWeight.bold,
+backgroundColor: Colors.amber[50])
+: TextStyle(color: AppColors.textPrimary),
+)
+]))
+DEBOUNCE — CALL API AFTER 300MS PAUSE
+_debounce?.cancel();
+_debounce = Timer(Duration(milliseconds: 300), () {
+ref.read(searchProvider.notifier).search(query);
+});
+
+1
+0
+Analytics Screen — /analytics
+Widgets: fl_chart BarChart + LineChart, TweenAnimationBuilder, AnimatedSwitcher
+File: features/analytics/presentation/screens/analytics_screen.dart
+ANIMATED BAR CHART (GPA DISTRIBUTION)
+// fl_chart BarChart with animated entry
+BarChart(
+BarChartData(
+barGroups: buckets.asMap().entries.map((e) =>
+BarChartGroupData(x: e.key, barRods: [
+BarChartRodData(
+toY: _animValue * e.value.count.toDouble(),
+color: AppColors.primary,
+borderRadius: BorderRadius.vertical(top: Radius.circular(4)),
+)
+])).toList(),
+),
+)
+COUNT-UP NUMBERS FOR STATS
+TweenAnimationBuilder(
+tween: IntTween(begin: 0, end: stat.value),
+duration: Duration(milliseconds: 800),
+curve: Curves.easeOut,
+builder: (_, val, __) => Text('$val',
+style: AppTextStyles.stat.copyWith(color: stat.color)),
+)
+TAB SWITCH — ANIMATEDSWITCHER
+AnimatedSwitcher(
+duration: Duration(milliseconds: 250),
+transitionBuilder: (child, anim) =>
+FadeTransition(opacity: anim, child:
+SlideTransition(position: Tween(
+begin: Offset(0.05, 0), end: Offset.zero).animate(anim),
+child: child)),
+child: _activeTab == 0 ? GlobalTab() : MarksheetTab(),
+)
+
+1
+1
+Admin Monitor — /admin
+Widgets: AnimatedContainer, DecoratedBox, StreamBuilder (or polling), ListView
+File: features/admin/presentation/screens/admin_screen.dart
+LIVE PULSING PRESENCE DOTS
+// Green dot that pulses for online users
+class PulsingDot extends StatefulWidget { ... }
+AnimatedContainer(
+duration: Duration(milliseconds: 750),
+width: _big ? 10 : 8,
+height: _big ? 10 : 8,
+decoration: BoxDecoration(
+shape: BoxShape.circle,
+color: _getStatusColor(user.presenceStatus),
+boxShadow: user.isOnline ? [BoxShadow(
+color: Colors.green.withOpacity(0.4), blurRadius: 6,
+spreadRadius: _big ? 2 : 0)] : [],
+),
+)
+LIVE ACTIVITY FEED — SLIDING IN NEW ITEMS
+AnimatedList(
+key: _listKey,
+initialItemCount: _activities.length,
+itemBuilder: (ctx, i, anim) =>
+SlideTransition(
+position: Tween(begin: Offset(1, 0), end: Offset.zero).animate(
+CurvedAnimation(parent: anim, curve: Curves.easeOut)),
+child: ActivityTile(activity: _activities[i]),
+),
+)
+SUSPICIOUS ACTIVITY — RED FLASH
+if (activity.isSuspicious)
+AnimatedContainer(
+color: _flash ? AppColors.error.withOpacity(0.1) : Colors.transparent,
+duration: Duration(milliseconds: 500),
+child: activityTile,
+)
+POLL EVERY 30 SECONDS
+Timer.periodic(Duration(seconds: 30), (_) =>
+ref.read(adminProvider.notifier).refreshPresence());
+
+3. Shared Widgets — Reusable Components
+Widget File
+What It Does
+Used In
+app_button.dart
+Primary/secondary/danger + loading spinner inside
+All screens
+app_text_field.dart
+Consistent input: label + error + focus animationLogin, Register
+app_loader.dart
+Shimmer skeleton + full-screen loader variants All data screens
+app_error_view.dart
+Error illustration + animated retry button
+All screens
+app_snackbar.dart
+Success/error/info snackbar with slide-in
+All screens
+stat_chip.dart
+Colored count chip (Pass: 42) with pop animationReview, Analytics
+section_card.dart
+White card wrapper with subtle border
+Home, Analytics
+confidence_badge.dart
+Green/yellow/red badge with animated fill
+Result, Cabinet
+pulsing_dot.dart
+Animated presence dot (green/yellow/gray)
+Admin, Home
+tamper_alert_banner.dart
+Red banner that slides in from top
+Result, Cabinet
+Page Transition — Custom Route Builder
+// router.dart — custom page transition for all routes
+CustomTransitionPage(
+child: screen,
+transitionsBuilder: (ctx, anim, secAnim, child) =>
+FadeTransition(
+opacity: CurvedAnimation(parent: anim, curve: Curves.easeInOut),
+child: SlideTransition(
+position: Tween(begin: Offset(0.03, 0), end: Offset.zero)
+.animate(CurvedAnimation(parent: anim, curve: Curves.easeOutCubic)),
+child: child,
+),
+),
+transitionDuration: Duration(milliseconds: 300),
+)
+Hero Transition — Folder to Detail
+// In CabinetListScreen — wrap folder icon:
+Hero(tag: 'folder_icon_${folder.id}',
+child: FolderIconWidget(folder: folder))
+// Navigate with context.push (GoRouter):
+context.push('/cabinet/${folder.id}')
+// In CabinetDetailScreen — same Hero tag:
+Hero(tag: 'folder_icon_${folder.id}',
+child: FolderIconWidget(folder: folder, size: 48))
+// Result: folder icon morphs smoothly from list → header
+
+4. Copy-Paste Prompts for Each Screen
+Use these prompts in Cursor, Copilot, or ChatGPT to generate each screen. Each prompt includes the design spec,
+animations, backend endpoint, and file structure.
+Login Screen Prompt
+Build a Flutter login screen for NagarDocs AI with these exact specs:
+FILE: lib/features/auth/presentation/screens/login_screen.dart
+ROUTE: /login
+DESIGN:
+- Dark navy top section (#1A3C5E) with app logo and title
+- White card below with Form containing 3 fields:
+1. Email (TextFormField, email keyboard)
+2. Password (obscured, toggle visibility icon)
+3. Department Code (e.g. CSMC-IT)
+- Primary button: Login Securely
+- Bottom link: Register
+ANIMATIONS:
+- On screen enter: card slides up from bottom (Offset(0,1) to Offset.zero, 400ms, easeOutCubic)
+- On submit: 3D card flip using Matrix4 rotateY, show success state on back
+- On error: shake animation using AnimationController + Tween(-8, 8)
+STATE: Uses Riverpod StateNotifier from auth_provider.dart
+BACKEND: POST /auth/login with {email, password, department_code}
+On success: save token to SecureStorage, navigate to /home
+On error: show snackbar with error message
+
+Home Dashboard Prompt
+Build a Flutter Home Dashboard screen for NagarDocs AI:
+FILE: lib/features/home/presentation/screens/home_screen.dart
+ROUTE: /home
+LAYOUT (CustomScrollView with SliverAppBar):
+- SliverAppBar: navy with user name + online indicator dot
+- Section 1: 2x2 grid of stat cards (animated stagger entrance):
+* Total Documents (blue)
+* Online Now (green)
+* Tamper Alerts (red)
+* Cabinets (purple)
+- Section 2: Quick Action row (4 buttons: Scan, Cabinet, Search, Analytics)
+- Section 3: Recent Documents list (last 5 with type icon + confidence badge)
+ANIMATIONS:
+- Stat cards stagger entrance: each delays 80ms, slides from Offset(0,0.3) easeOutBack
+- Numbers count up from 0 using TweenAnimationBuilder
+- Quick action buttons scale on press: AnimatedScale 1.0 -> 0.92 -> 1.0
+BACKEND: GET /analytics/global
+PROVIDER: home_provider.dart (StateNotifier)
+
+Upload + Processing Prompt
+Build Flutter Upload Screen and Processing Screen for NagarDocs AI:
+FILE 1: lib/features/upload/presentation/screens/upload_screen.dart
+FILE 2: lib/features/upload/presentation/screens/processing_screen.dart
+UPLOAD SCREEN WIDGETS:
+- Large circular scan button (64px) with camera icon, 3D press effect
+(Matrix4 perspective + scale 0.92 on press)
+- Gallery upload button (secondary)
+- Supported formats card: Marksheet, Birth Cert, Property, Income, Ration, Other
+- Language badges: English, Hindi, Marathi
+PROCESSING SCREEN:
+- 5 animated pipeline steps (icon + label + progress bar each):
+1. OCR Text Extraction, 2. AI Classification, 3. Field Extraction,
+4. Duplicate Check, 5. Tamper Detection
+- Active step pulses with AnimatedScale 1.0<->1.05 (600ms loop)
+- Progress bar fills with AnimatedFractionallySizedBox
+- Poll GET /upload/status/{job_id} every 2 seconds with Timer.periodic
+- Navigate to /result/{doc_id} when status == done
+BACKEND: POST /upload (multipart), GET /upload/status/{id}
+PROVIDER: upload_provider.dart StateNotifier
+
+Cabinet + Folder Detail Prompt
+Build Flutter Cabinet Screen and Folder Detail Screen for NagarDocs AI:
+FILE 1: lib/features/cabinet/presentation/screens/cabinet_list_screen.dart
+FILE 2: lib/features/cabinet/presentation/screens/cabinet_detail_screen.dart
+CABINET SCREEN:
+- Dark Auto-Sort button at top (navy, sparkle icon that rotates on tap)
+- 2-column GridView of folder cards
+- Each folder card: colored icon (36px) + name + doc count
+- 3D tilt effect on folder card press using Matrix4 rotateX/Y
+- Hero tag on each folder icon: 'folder_icon_{folder.id}'
+- Flagged folder has red background
+FOLDER DETAIL SCREEN:
+- Top bar with back arrow + folder name + Export button
+- Search bar for filtering within folder
+- List of documents: type icon + filename + date + confidence badge
+- Hero tag matches cabinet screen: 'folder_icon_{folder.id}'
+- Slide-in entrance for document list items (staggered 60ms each)
+BACKEND: GET /cabinet/folders, GET /cabinet/{id}/documents
+POST /cabinet/autosort
+PROVIDER: cabinet_provider.dart StateNotifier
+
+Admin Monitor Prompt
+Build Flutter Admin Monitor Screen for NagarDocs AI:
+FILE: lib/features/admin/presentation/screens/admin_screen.dart
+ROUTE: /admin (admin role only — check user.role == 'admin')
+3 TABS:
+TAB 1 — Presence:
+- List of users with avatar circle (initials) + name + designation
+- Each user has a PulsingDot widget:
+* Green pulsing = online (last_seen < 5 mins)
+* Yellow = idle (5-30 mins)
+* Gray = offline
+- Pulsing: AnimatedContainer width 8px<->10px, 750ms loop,
+with BoxShadow spread 0->2 for glow
+TAB 2 — Activity Feed:
+- AnimatedList with slide-in from right for new items
+- Each item: avatar + text + timestamp
+- Suspicious items: red background with flash animation
+TAB 3 — Security:
+- Tamper flagged documents list
+- Admin action buttons per user: Suspend / Revoke / Warn / Approve
+- Audit log entries in monospace font
+POLLING: Timer.periodic every 30 seconds for presence refresh
+BACKEND: GET /admin/presence, /admin/activity, /admin/security
+POST /admin/ban-user/{id}, /admin/approve-user/{id}
+PROVIDER: admin_provider.dart StateNotifier
+
+5. Flutter Dependencies — pubspec.yaml
+Package
+Version
+Used For
+flutter_riverpod
+^2.5.1
+State management — all providers
+go_router
+^13.2.0
+Navigation + custom transitions
+dio
+^5.4.3
+HTTP client with auth interceptor
+supabase_flutter
+^2.5.0
+Auth + storage
+file_picker
+^8.1.2
+Pick PDFs from device
+image_picker
+^1.0.7
+Camera scan
+open_filex
+^4.3.4
+Open downloaded files
+fl_chart
+^0.68.0
+Analytics bar + line charts
+confetti
+^0.7.0
+Confetti on high-confidence result
+shimmer
+^3.0.0
+Skeleton loaders
+flutter_secure_storage
+^9.2.2
+JWT token storage
+freezed_annotation
+^2.4.4
+Immutable models + states
+json_annotation
+^4.9.0
+JSON serialization
+path_provider
+^2.1.3
+Device file paths
+Add to pubspec.yaml dev_dependencies:
+dev_dependencies:
+build_runner: ^2.4.9
+freezed: ^2.5.2
+json_serializable: ^6.8.0
+flutter_lints: ^3.0.0
+NagarDocs AI — Flutter Frontend Guide — Hack-The-Gap 2.0 SG2
